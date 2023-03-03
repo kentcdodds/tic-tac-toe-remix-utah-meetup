@@ -50,3 +50,15 @@ export function calculateWinner(squares: Squares): Player | null {
   }
   return null;
 }
+
+import { EventEmitter } from "events";
+
+export const EVENTS = {
+  NEW_MOVE: "NEW_MOVE",
+};
+
+declare global {
+  var __game_emitter__: EventEmitter;
+}
+export const gameEmitter = (global.__game_emitter__ =
+  global.__game_emitter__ ?? new EventEmitter());

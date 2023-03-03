@@ -1,12 +1,20 @@
 import { DataFunctionArgs, redirect } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Form, useLoaderData, useRevalidator } from "@remix-run/react";
+import {
+  Form,
+  useLoaderData,
+  useParams,
+  useRevalidator,
+} from "@remix-run/react";
+import { useEffect } from "react";
 import invariant from "tiny-invariant";
 import useInterval from "use-interval";
 import {
   calculateNextValue,
   calculateStatus,
   calculateWinner,
+  EVENTS,
+  gameEmitter,
   games,
 } from "~/games.server";
 import { sessionStorage } from "~/session.server";
@@ -58,6 +66,11 @@ export async function action({ request, params }: DataFunctionArgs) {
   }
   invariant(typeof params.name === "string", "name should be a string");
   const game = games.get(params.name);
+  const session = await sessionStorage.getSession();
+  let player = session.get(`player-${params.name}`);
+  if (!player) {
+    throw new Response("You are not a player in this game", { status: 403 });
+  }
   if (!game) {
     throw new Response("Game not found", { status: 404 });
   }
@@ -67,19 +80,36 @@ export async function action({ request, params }: DataFunctionArgs) {
   }
 
   const newSquares = [...game.squares];
-  newSquares[squareIndexNumber] = calculateNextValue(game.squares);
+  const nextValue = calculateNextValue(game.squares);
+  if (nextValue !== player) {
+    throw new Response("Invalid move", { status: 400 });
+  }
+  newSquares[squareIndexNumber] = nextValue;
   games.set(params.name, { ...game, squares: newSquares });
+  gameEmitter.emit(EVENTS.NEW_MOVE);
   return redirect(`/game/${params.name}`);
 }
 
 export default function Game() {
   const { squares, player, canPlay, isSpectator, status } =
     useLoaderData<typeof loader>();
+  const params = useParams();
 
   const { revalidate } = useRevalidator();
-  useInterval(() => {
-    revalidate();
-  }, 1000);
+
+  useEffect(() => {
+    const eventSource = new EventSource(`/games/${params.name}/sub`);
+    eventSource.addEventListener("NEW_MOVE", handler);
+
+    function handler(event: MessageEvent) {
+      revalidate();
+    }
+
+    return () => {
+      eventSource.removeEventListener("NEW_MOVE", handler);
+      eventSource.close();
+    };
+  }, []);
 
   function renderSquare(i: number) {
     return (
